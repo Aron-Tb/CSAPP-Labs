@@ -414,5 +414,18 @@ int floatFloat2Int(unsigned uf) {
  *   Rating: 4
  */
 unsigned floatPower2(int x) {
-    return 2;
+    // x 的合理范围： -127 ~ 127
+    int inf = 0x7f800000;
+    int sign = x>>31 & 1;
+    int result;
+    if (x >= -127 && x <= 127)  {
+        result = ((sign << 8) | ((x+127) & 0xff)) << 23;
+    }
+    else if (x < -127)  {
+        result = 0;
+    }
+    else if (x > 127)  {
+        result = inf;
+    }
+    return result;
 }
