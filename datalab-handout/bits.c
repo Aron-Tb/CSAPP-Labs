@@ -143,7 +143,8 @@ NOTES:
  *   Rating: 1
  */
 int bitXor(int x, int y) {
-  return 2;
+
+    return ~(~(~x&y) & ~(~y&x));
 }
 /* 
  * tmin - return minimum two's complement integer 
@@ -152,9 +153,7 @@ int bitXor(int x, int y) {
  *   Rating: 1
  */
 int tmin(void) {
-
-  return 2;
-
+    return 1<<31;
 }
 //2
 /*
@@ -165,7 +164,9 @@ int tmin(void) {
  *   Rating: 1
  */
 int isTmax(int x) {
-  return 2;
+    int y = x + 1; // y = 10000... 或 00000...
+    // 排除 x = ffff...的情况
+    return (!(y+x+1)) & (!!(y^0));
 }
 /* 
  * allOddBits - return 1 if all odd-numbered bits in word set to 1
@@ -176,7 +177,11 @@ int isTmax(int x) {
  *   Rating: 2
  */
 int allOddBits(int x) {
-  return 2;
+    int mask0 = 0xAA;
+    int mask1 = mask0<<8 | mask0;
+    int mask2 = mask1<<8 | mask1;
+    int mask3 = mask2<<8 | mask2;
+    return !((x&mask3) ^ mask3);
 }
 /* 
  * negate - return -x 
@@ -186,7 +191,8 @@ int allOddBits(int x) {
  *   Rating: 2
  */
 int negate(int x) {
-  return 2;
+    // 相反数的补码：全部取反，末位+1
+    return (~x)+1;
 }
 //3
 /* 
@@ -199,7 +205,9 @@ int negate(int x) {
  *   Rating: 3
  */
 int isAsciiDigit(int x) {
-  return 2;
+    // 用位操作计算出相反数的补码，再做加法
+    // return !((x-0x30)>>31 | (0x39-x)>>31);
+    return !((x+(~0x30+1))>>31 | (0x39+(~x+1))>>31);
 }
 /* 
  * conditional - same as x ? y : z 
@@ -209,7 +217,11 @@ int isAsciiDigit(int x) {
  *   Rating: 3
  */
 int conditional(int x, int y, int z) {
-  return 2;
+    // 当x布尔值为0时生成掩码 00000000, 为1时生成 FFFFFFFF
+    
+    int xsd = !!x;
+    int mask = (xsd << 31) >> 31;
+    return (mask&y) | (~mask&z);
 }
 /* 
  * isLessOrEqual - if x <= y  then return 1, else return 0 
@@ -219,7 +231,21 @@ int conditional(int x, int y, int z) {
  *   Rating: 3
  */
 int isLessOrEqual(int x, int y) {
-  return 2;
+    /*  1. x == y 
+        2. x - y + 
+        3. x + y - 
+        4. x +/- y +/- : 同号相减判断
+    */
+    int signX = x>>31&1;
+    int signY = y>>31&1;
+    // 同号计算 x - y < 0
+    int signRes = (x + (~y)+1) >> 31 & 1;
+
+    int cond1 = !(x^y);
+    int cond2 = (signX^0)&(signY^1);
+    int cond3 = (signX^1)&(signY^0);
+    int cond4 = signRes;
+    return (!cond3) & (cond1|cond2|cond4);
 }
 //4
 /* 
@@ -231,7 +257,13 @@ int isLessOrEqual(int x, int y) {
  *   Rating: 4 
  */
 int logicalNeg(int x) {
-  return 2;
+    // 检测是否有1
+    x |= x>>1;
+    x |= x>>2;
+    x |= x>>4;
+    x |= x>>8;
+    x |= x>>16;
+    return ~x&1;
 }
 /* howManyBits - return the minimum number of bits required to represent x in
  *             two's complement
@@ -246,7 +278,25 @@ int logicalNeg(int x) {
  *  Rating: 4
  */
 int howManyBits(int x) {
-  return 0;
+    /* 区分正数和负数，负数高位的多位1可以被一个1代替
+     * 负数取反转换为正数，高位1变为0，与正数计位方式相同
+    */
+    int sign_pos = 1, high_16, high_8, high_4, high_2, high_1, high_0;
+    int sign = x>>31;  // 正数为 00000000， 负数为 FFFFFFFF
+    x = (sign & (~x)) | (~sign & x);
+    // 二分查找区间内是否有1
+    high_16 = !!(x>>16) << 4;
+    x >>= high_16;
+    high_8 = !!(x>>8) << 3;
+    x >>= high_8;
+    high_4 = !!(x>>4) << 2;
+    x >>= high_4;
+    high_2 = !!(x>>2) << 1;
+    x >>= high_2;
+    high_1 = !!(x>>1);
+    x >>= high_1;
+    high_0 = x & 1;
+    return high_16 + high_8 + high_4 + high_2 + high_1 + high_0 + sign_pos;
 }
 //float
 /* 
@@ -261,7 +311,36 @@ int howManyBits(int x) {
  *   Rating: 4
  */
 unsigned floatScale2(unsigned uf) {
-  return 2;
+    /*
+     *1. 阶码全1， 直接返回
+     *2. 阶码全0， 尾数全0， 直接返回
+     *3. 阶码全0， 尾数不为0，尾数左移1位，若尾数第一位为1，则阶码+1，成为规格化数。
+     *4. 阶码非全0非全1， 为规格化数， 阶码+1即可，不会溢出
+    */
+    int sign = uf >> 31 & 1;
+    int exponent = uf>>23 & 0xff;
+    int rear_number = uf & ((1<<24)-1);
+    int first_rear_number = rear_number >> 22;
+    int cond1 = exponent == 0xff;
+    int cond2 = (exponent==0) && (rear_number==0);
+    int cond3 = (exponent==0) && (uf<<9);
+    int cond4 = (exponent!=0xff) && exponent;
+    int exponent_add1 = 1 << 23;
+    int result = 0;
+    if (cond1 | cond2)  {
+        result = uf;
+    }
+    else if (cond3)  {
+        rear_number = (rear_number<<1) & ((1<<23)-1);
+        if (first_rear_number)  {
+            exponent = (exponent << 23) + exponent_add1;  // 此处的exponent 不再需要左移
+        }
+        result = sign<<31 | exponent | rear_number;
+    }
+    else if (cond4)  {
+        result = uf + exponent_add1;
+    }
+    return result;
 }
 /* 
  * floatFloat2Int - Return bit-level equivalent of expression (int) f
@@ -276,7 +355,49 @@ unsigned floatScale2(unsigned uf) {
  *   Rating: 4
  */
 int floatFloat2Int(unsigned uf) {
-  return 2;
+    /*
+        * 1. 阶码全1:NAN or infinity 
+        * 2. 阶码全0:
+        * 3. 规格化数: 计算
+    */
+    int sign = uf >> 31 & 1;
+    int exponent = uf >> 23 & 0xff;
+    int rear_number = uf & ((1<<24)-1);
+    int rear_number_add1 = rear_number | (1<<23);
+    int result = 1<<31;
+    //int cond1 = exponent == 0xff;
+    int cond2 = exponent == 0;
+    int cond3 = (exponent!=0xff) && exponent;
+    int leftMove = exponent-127-23;
+    int rightMove = 23 - (exponent - 127);
+    if (cond2)  {
+        result = 0;
+    }
+    else if (cond3)  {
+        // 左移
+        if (exponent - 127 > 23 && exponent -127 < 31)  {
+            result = rear_number_add1 << leftMove | (sign<<31);
+        }
+        // 左移溢出
+        else if (exponent - 127 >= 31)  {
+            result = 1<<31;
+        }
+
+        // 正数右移
+        else if (sign==0 && exponent - 127 <=23 && exponent - 127 >= 0)  {
+            result = (rear_number_add1 >> rightMove) | (sign<<31);
+        }
+        // 负数右移：需要处理向0方向舍入
+        else if (sign==1 && exponent - 127 <=23 && exponent - 127 >= 0)  {
+            result = (rear_number_add1 + ((1 << rightMove) - 1)) >> rightMove;
+            result = (~result) + 1;
+        }
+        // 舍入为0
+        else  {
+            result = 0;
+        }
+    }
+    return result;
 }
 /* 
  * floatPower2 - Return bit-level equivalent of the expression 2.0^x
