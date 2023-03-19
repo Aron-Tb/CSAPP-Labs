@@ -361,38 +361,39 @@ int floatFloat2Int(unsigned uf) {
         * 3. 规格化数: 计算
     */
     int sign = uf >> 31 & 1;
-    int exponent = uf >> 23 & 0xff;
+    int exp = uf >> 23 & 0xff;
+    int ac_exp = exp - 127;
     int rear_number = uf & ((1<<24)-1);
     int rear_number_add1 = rear_number | (1<<23);
-    int result = 1<<31;
+    int result = 0x80000000;
     //int cond1 = exponent == 0xff;
-    int cond2 = exponent == 0;
-    int cond3 = (exponent!=0xff) && exponent;
-    int leftMove = exponent-127-23;
-    int rightMove = 23 - (exponent - 127);
+    int cond2 = exp == 0;
+    int cond3 = (exp!=0xff) && exp;
+    int leftMove = ac_exp - 23;
+    int rightMove = 23 - ac_exp;
     if (cond2)  {
         result = 0;
     }
     else if (cond3)  {
         // 左移
-        if (exponent - 127 > 23 && exponent -127 < 31)  {
+        if (ac_exp > 23 && ac_exp < 31)  {
             result = rear_number_add1 << leftMove | (sign<<31);
         }
         // 左移溢出
-        else if (exponent - 127 >= 31)  {
-            result = 1<<31;
+        else if (ac_exp >= 31)  {
+            result = 0x80000000;
         }
 
-        // 正数右移
-        else if (sign==0 && exponent - 127 <=23 && exponent - 127 >= 0)  {
-            result = (rear_number_add1 >> rightMove) | (sign<<31);
+        // 右移
+        else if (ac_exp <=23 && ac_exp >= 0)  {
+            result = rear_number_add1 >> rightMove;
+            // 负数右移
+            if (sign)  {
+                result = (~result) + 1;
+            }
         }
-        // 负数右移：需要处理向0方向舍入
-        else if (sign==1 && exponent - 127 <=23 && exponent - 127 >= 0)  {
-            result = (rear_number_add1 + ((1 << rightMove) - 1)) >> rightMove;
-            result = (~result) + 1;
-        }
-        // 舍入为0
+        
+        // 右移溢出：舍入为0
         else  {
             result = 0;
         }
