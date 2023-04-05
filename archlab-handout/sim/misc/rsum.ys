@@ -1,0 +1,43 @@
+# Recursively sum linked list elements
+# author: Aron
+# Date: 4/5/2023
+
+# Execution begins at address 0
+    .pos 0
+    irmovq stack, %rsp
+    call main
+    halt
+
+# Sample linked list
+    .align 8
+ls:
+    ele1:
+    .quad 0x00a
+    .quad ele2
+    ele2:
+    .quad 0x0b0
+    .quad ele3
+    ele3:
+    .quad 0xc00
+    .quad 0
+
+# main
+main:
+    irmovq ls, %rdi
+    call rsum_list
+    ret
+
+rsum_list:
+    xorq %rax, %rax  # set %rax = 0
+    andq %rdi, %rdi  # test: ls == nullptr
+    je return
+    mrmovq (%rdi), %rsi  # val = ls->val
+    mrmovq 8(%rdi), %rdi # ls = ls->next
+    pushq %rsi
+    call rsum_list
+    popq %rsi
+    addq %rsi, %rax    
+    return:
+        ret
+    .pos 0x200
+stack:
