@@ -25,6 +25,7 @@
 #include "stdlib.h"
 #include "unistd.h"
 #include <stdio.h>
+#include <string.h>
 
 #include "cachelab.h"
 
@@ -45,32 +46,35 @@ typedef struct cache
 }Cache;
 
 Cache *cache = 0;
-static int hit_count = 0, miss_count = 0, eviction_count = 0;
-static char t[100]; // 读入文件名
-static int verbose = 0;
+int hit_count = 0, miss_count = 0, eviction_count = 0;
+char t[100]; // 读入文件名
+int verbose = 0;
 
 Cache *init_cache(int s, int E, int b)
 {
 	if (s>>31 || E>>31 || b>>31) 
-		return 0; // 非法输入
+		exit(-1); // 非法输入
 	int S = 1<<s;
 	int B = 1<<b;
 	cache = (Cache *)malloc(sizeof(Cache));
 	if (!cache) 
-		return 0; // 初始化失败
+		exit(-1); // 初始化失败
 	cache->S = S;
 	cache->E = E;
 	cache->B = B;
-	cache->line = (Cache_line *)malloc(sizeof(Cache_line) * S * E);	
+	cache->line = (Cache_line **)malloc(sizeof(Cache_line *) * S);	
 	if (!cache->line) 
-		return 0; // 初始化失败
-	for (int i=0; i<cache->S; ++i) // 初始化
-		for (int j=0; j<cache->E; ++j)
+		exit(-1); // 初始化失败
+	for (int i=0; i < S; ++i) // 初始化
+	{
+		cache->line[i] = (Cache_line *)malloc(sizeof(Cache_line) * E);
+		for (int j=0; j < E; ++j)
 		{
 			cache->line[i][j].valid = 0;
 			cache->line[i][j].tag = -1;
 			cache->line[i][j].time_stamp = 0;
 		}
+	}
 	return cache;
 }
 
@@ -90,7 +94,7 @@ int hit_or_miss(int op_s, int op_tag)
 		return -2; // 非法输入
 	for (int i=0; i<cache->E; ++i)
 		if (cache->line[op_s][i].valid && cache->line[op_s][i].tag==op_tag)
-			return 1; // hit
+			return i; // hit
 	return -1; // miss
 }
 
@@ -113,7 +117,7 @@ void update_cache(int i, int op_s, int op_tag)
 	cache->line[op_s][i].tag = op_tag;
 	for (int j=0; j<cache->E; ++j)
 		if (cache->line[op_s][i].valid == 1)
-			++(cache->line[op_s][j].time_stamp);	
+			++(cache->line[op_s][j].time_stamp);
 	cache->line[op_s][i].time_stamp = 0;
 }
 
@@ -146,12 +150,13 @@ void lookup_cache(int op_s, int op_tag)
 		if (i == -1)
 		{
 			++eviction_count;
-			if (verbose) printf("eviction");
+			if (verbose) 
+				printf("eviction");
 			i = LRU_find(op_s);
 		}
 		update_cache(i, op_s, op_tag);
 	}
-	else  // hit
+	else if (index >= 0) // hit
 	{
 		++hit_count;
 		if (verbose)
@@ -183,21 +188,27 @@ void get_trace(int s, int E, int b)
 	unsigned int address;
 	int size;
 	// 读入相关变量
-	while ((fscanf(pf, "%c %u, %d", &op, &address, &size)) != EOF)
+	while ((fscanf(pf, "%c %x,%d", &op, &address, &size)) != EOF)
 	{
 		int op_s = get_op_s(address, s, b);
 		int op_tag = get_op_tag(address, s, b);	
 		switch(op)
 		{
 			case 'L':  // 加载指令
+				printf("%c %x,%d ", op, address, size);
 				lookup_cache(op_s, op_tag);
+				putchar('\n');
 				break;
 			case 'S':
+				printf("%c %x,%d ", op, address, size);
 				lookup_cache(op_s, op_tag);
+				putchar('\n');
 				break;
 			case 'M':
+				printf("%c %x,%d ", op, address, size);
 				lookup_cache(op_s, op_tag);
 				lookup_cache(op_s, op_tag);
+				putchar('\n');
 				break;
 			default:
 				break;
@@ -216,7 +227,7 @@ void print_help()
     printf("-s <num>   Number of set index bits.\n");
     printf("-E <num>   Number of lines per set.\n");
     printf("-b <num>   Number of block offset bits.\n");
-    printf("-t <file>  Trace file.\n\n\n");
+    printf("-t <file>  Trace file.\n\n");
     printf("Examples:\n");
     printf("linux>  ./csim -s 4 -E 1 -b 4 -t traces/yi.trace\n");
     printf("linux>  ./csim -v -s 8 -E 2 -b 4 -t traces/yi.trace\n");
