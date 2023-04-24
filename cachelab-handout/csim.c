@@ -195,20 +195,26 @@ void get_trace(int s, int E, int b)
 		switch(op)
 		{
 			case 'L':  // 加载指令
-				printf("%c %x,%d ", op, address, size);
+				if (verbose)
+					printf("%c %x,%d ", op, address, size);
 				lookup_cache(op_s, op_tag);
-				putchar('\n');
+				if (verbose)
+					putchar('\n');
 				break;
 			case 'S':
-				printf("%c %x,%d ", op, address, size);
+				if (verbose)
+					printf("%c %x,%d ", op, address, size);
 				lookup_cache(op_s, op_tag);
-				putchar('\n');
+				if (verbose)
+					putchar('\n');
 				break;
 			case 'M':
-				printf("%c %x,%d ", op, address, size);
+				if (verbose)
+					printf("%c %x,%d ", op, address, size);
 				lookup_cache(op_s, op_tag);
 				lookup_cache(op_s, op_tag);
-				putchar('\n');
+				if (verbose)
+					putchar('\n');
 				break;
 			default:
 				break;
