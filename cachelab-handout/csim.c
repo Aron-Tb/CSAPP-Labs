@@ -151,7 +151,7 @@ void lookup_cache(int op_s, int op_tag)
 		{
 			++eviction_count;
 			if (verbose) 
-				printf("eviction");
+				printf("eviction ");
 			i = LRU_find(op_s);
 		}
 		update_cache(i, op_s, op_tag);
