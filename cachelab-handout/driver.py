@@ -20,7 +20,7 @@ import optparse;
 def computeMissScore(miss, lower, upper, full_score):
     if miss <= lower:
         return full_score
-    if miss >= upper: 
+    if miss >= upper:
         return 0
 
     score = (miss - lower) * 1.0 
