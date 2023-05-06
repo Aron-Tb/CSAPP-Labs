@@ -1,3 +1,11 @@
 {
-    "C_Cpp.default.configurationProvider": "ms-vscode.makefile-tools"
+    "C_Cpp.default.configurationProvider": "ms-vscode.makefile-tools",
+    "files.associations": {
+        "signal.h": "c",
+        "unistd.h": "c",
+        "sigaction.h": "c",
+        "string.h": "c",
+        "ctype.h": "c",
+        "types.h": "c"
+    }
 }

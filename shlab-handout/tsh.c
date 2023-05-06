@@ -1,8 +1,13 @@
 /* 
  * tsh - A tiny shell program with job control
  * 
- * <Put your name and login ID here>
+ * Author: Aron
+ * Date: 5/5/2023 
  */
+#define _POSIX_SOURCE
+#define SA_RESTART   0x10000000
+#include <getopt.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -63,6 +68,16 @@ void waitfg(pid_t pid);
 void sigchld_handler(int sig);
 void sigtstp_handler(int sig);
 void sigint_handler(int sig);
+
+/* Functions with checking errno */
+pid_t Fork();  
+void Sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+void Sigemptyset(sigset_t *set);
+void Sigfillset(sigset_t *set);
+void Sigaddset(sigset_t *set, int signum);
+void Execve(const char *filename, char * const argv[], char * const envp[]);
+void Setpgid(pid_t pid, pid_t pgid);
+void Kill(pid_t pid, int sig);
 
 /* Here are helper routines that we've provided for you */
 int parseline(const char *cmdline, char **argv); 
@@ -130,23 +145,21 @@ int main(int argc, char **argv)
 
     /* Execute the shell's read/eval loop */
     while (1) {
+        /* Read command line */
+        if (emit_prompt) {
+            printf("%s", prompt);
 
-	/* Read command line */
-	if (emit_prompt) {
-	    printf("%s", prompt);
-	    fflush(stdout);
-	}
-	if ((fgets(cmdline, MAXLINE, stdin) == NULL) && ferror(stdin))
-	    app_error("fgets error");
-	if (feof(stdin)) { /* End of file (ctrl-d) */
-	    fflush(stdout);
-	    exit(0);
-	}
-
-	/* Evaluate the command line */
-	eval(cmdline);
-	fflush(stdout);
-	fflush(stdout);
+        }
+        if ((fgets(cmdline, MAXLINE, stdin) == NULL) && ferror(stdin))
+            app_error("fgets error");
+        if (feof(stdin)) { /* End of file (ctrl-d) */
+            fflush(stdout);
+            exit(0);
+        }
+        /* Evaluate the command line */
+        eval(cmdline);
+        fflush(stdout);
+        fflush(stdout);
     } 
 
     exit(0); /* control never reaches here */
@@ -165,6 +178,45 @@ int main(int argc, char **argv)
 */
 void eval(char *cmdline) 
 {
+    char *argv[MAXARGS];
+    char buf[MAXLINE]; // hold cmdline locally
+    pid_t pid;
+    strcpy(buf, cmdline);
+    int state = parseline(buf, argv)? BG : FG;  // construct argv vector
+    int is_builtin_cmd = builtin_cmd(argv);
+    if (argv[0] == NULL)
+        return ; // empty command line do nothing
+    sigset_t mask_all, mask_one, prev_mask;
+    sigfillset(&mask_all);
+    sigemptyset(&mask_one);
+    sigaddset(&mask_one, SIGCLD);  // 屏蔽子进程中断信号
+    // not builtin_cmds
+    if (!is_builtin_cmd)  {
+        Sigprocmask(SIG_BLOCK, &mask_one, &prev_mask);  // 屏蔽SIGCLD
+        if ((pid = Fork()) == 0)  {
+            Sigprocmask(SIG_SETMASK, &prev_mask, NULL); // 取消屏蔽SIGCLD
+            Setpgid(0, 0);
+            Execve(argv[0], argv, environ);
+            exit(-1); // 只有在没找到对应程序时，才会返回执行此处
+        }
+
+        Sigprocmask(SIG_BLOCK, &mask_all, NULL);  // 屏蔽所有信号
+        addjob(jobs, pid, state, cmdline);
+        Sigprocmask(SIG_SETMASK, &mask_one, NULL);  // 取消屏蔽信号(只屏蔽SIGCLD)       
+
+        switch(state)  {
+            case FG:
+                waitfg(pid);
+                break;
+            case BG:
+                printf("[%d] (%d) %s", pid2jid(pid), pid, cmdline);
+                break;
+            default:
+                printf("Illegal job status!\n");
+                exit(1);
+        }
+        Sigprocmask(SIG_UNBLOCK, &mask_one, NULL);  // 取消屏蔽SIGCLD
+    }
     return;
 }
 
@@ -190,28 +242,28 @@ int parseline(const char *cmdline, char **argv)
 
     /* Build the argv list */
     argc = 0;
-    if (*buf == '\'') {
-	buf++;
-	delim = strchr(buf, '\'');
+    if (*buf == '\'') {  // single quote input, find next single quote
+	    buf++;
+	    delim = strchr(buf, '\'');
     }
-    else {
-	delim = strchr(buf, ' ');
+    else {  // no single quote input, find space
+	    delim = strchr(buf, ' ');
     }
 
     while (delim) {
-	argv[argc++] = buf;
-	*delim = '\0';
-	buf = delim + 1;
-	while (*buf && (*buf == ' ')) /* ignore spaces */
-	       buf++;
+    	argv[argc++] = buf;
+	    *delim = '\0';
+	    buf = delim + 1;
+	    while (*buf && (*buf == ' ')) /* ignore spaces */
+	        buf++;
 
-	if (*buf == '\'') {
-	    buf++;
-	    delim = strchr(buf, '\'');
-	}
-	else {
-	    delim = strchr(buf, ' ');
-	}
+    	if (*buf == '\'') {
+	        buf++;
+	        delim = strchr(buf, '\'');
+	    }
+        else {
+            delim = strchr(buf, ' ');
+        }
     }
     argv[argc] = NULL;
     
@@ -220,7 +272,7 @@ int parseline(const char *cmdline, char **argv)
 
     /* should the job run in the background? */
     if ((bg = (*argv[argc-1] == '&')) != 0) {
-	argv[--argc] = NULL;
+	    argv[--argc] = NULL; // replace '&' by NULL
     }
     return bg;
 }
@@ -231,7 +283,18 @@ int parseline(const char *cmdline, char **argv)
  */
 int builtin_cmd(char **argv) 
 {
-    return 0;     /* not a builtin command */
+    // judge if cmd is built-in command
+    int is_builtin_cmds = 1;
+    const char *cmd = argv[0];
+    if (!strcmp(cmd, "quit"))  
+        exit(0);
+    else if (!strcmp(cmd, "bg") || !strcmp(cmd, "fg"))  
+        do_bgfg(argv);
+    else if (!strcmp(cmd, "jobs")) 
+        listjobs(jobs);
+    else
+        is_builtin_cmds = 0;
+    return is_builtin_cmds;     /* not a builtin command */
 }
 
 /* 
@@ -239,7 +302,63 @@ int builtin_cmd(char **argv)
  */
 void do_bgfg(char **argv) 
 {
-    return;
+    // bg <job> / fg <job>
+    struct job_t *job = NULL;  // 待修改的作业项
+    const char *cmd = argv[0];
+    const char *arg = argv[1];
+    int jid = -1; 
+    int pid = 0; 
+    // check input:
+    if (arg == NULL)  {
+        printf("%s command requires PID or %%jobid argument\n", cmd);
+        return ;
+    }
+    for (int i=1; i<strlen(arg); ++i)  
+        if (!isdigit(arg[i]))  {
+            printf("%s: argument must be a PID or %%jobid\n", cmd);
+            return ;
+        }
+
+    if (arg[0] == '%')  {
+        const char *temp = arg + 1;
+        jid = atoi(temp);
+    }
+    else if (isdigit(arg[0]))  {
+        pid = atoi(arg);
+        jid = pid2jid(pid);
+    }
+    
+    else if (!isdigit(arg[0])) {
+        printf("%s: argument must be a PID or %%jobid\n", cmd);
+        return ;
+    }
+    
+    if (jid) {
+        for (int i=0; i<MAXJOBS; ++i)
+            if (jobs[i].jid == jid)
+                job = &jobs[i];
+    }
+    if (!job)  {
+        if (pid) 
+            printf("(%d): No such process\n", pid); 
+        else
+            printf("%%%d: No such job\n", jid); 
+        return ;
+    }
+    // input check ends
+
+    if (!strcmp(cmd, "bg"))  {
+        printf("[%d] (%d) %s", job->jid, job->pid, job->cmdline);
+        job->state = BG;
+        Kill(-(job->pid), SIGCONT);
+    }
+    else if (!strcmp(cmd, "fg"))  {
+        Kill(-(job->pid), SIGCONT);
+        job->state = FG;
+        waitfg(job->pid);
+    }
+    
+    return ;
 }
 
 /* 
@@ -247,6 +366,10 @@ void do_bgfg(char **argv)
  */
 void waitfg(pid_t pid)
 {
+    sigset_t mask;
+    Sigemptyset(&mask);
+    while (fgpid(jobs))
+        sigsuspend(&mask);  // 挂起，并取消阻塞
     return;
 }
 
@@ -263,6 +386,29 @@ void waitfg(pid_t pid)
  */
 void sigchld_handler(int sig) 
 {
+    int old_errno = errno;
+    int status;
+    pid_t pid;
+    struct job_t *job;
+    sigset_t mask_all, prev_one;
+    Sigfillset(&mask_all);
+    while ( (pid = waitpid(-1, &status, WNOHANG | WUNTRACED)) > 0)  {
+        Sigprocmask(SIG_BLOCK, &mask_all, &prev_one);
+        if (WIFEXITED(status))  {  // 正常终止
+            deletejob(jobs, pid);
+        }
+        else if (WIFSIGNALED(status))  {
+            printf ("Job [%d] (%d) terminated by signal %d\n", pid2jid(pid), pid, WTERMSIG(status));
+            deletejob(jobs, pid);
+        }
+        else if (WIFSTOPPED(status))  {
+            printf ("Job [%d] (%d) stoped by signal %d\n", pid2jid(pid), pid, WSTOPSIG(status));
+            job = getjobpid(jobs, pid);
+            job->state = ST;
+        }
+        Sigprocmask(SIG_SETMASK, &prev_one, NULL);
+    }
+    errno = old_errno;
     return;
 }
 
@@ -273,6 +419,20 @@ void sigchld_handler(int sig)
  */
 void sigint_handler(int sig) 
 {
+    int old_errno = errno;
+    int pid;
+    sigset_t mask_all, prev_one;
+    Sigfillset(&mask_all);
+    Sigprocmask(SIG_BLOCK, &mask_all, &prev_one);  // 访问全局变量 jobs 上锁
+    if ( (pid=fgpid(jobs)) != 0)  {
+        Sigprocmask(SIG_SETMASK, &prev_one, NULL);
+        Kill(-pid, SIGINT);
+    }
+    else  {
+        Sigprocmask(SIG_SETMASK, &prev_one, NULL);
+        printf("No such foreground job!\n");
+    }
+    errno = old_errno;
     return;
 }
 
@@ -281,14 +441,79 @@ void sigint_handler(int sig)
  *     the user types ctrl-z at the keyboard. Catch it and suspend the
  *     foreground job by sending it a SIGTSTP.  
  */
-void sigtstp_handler(int sig) 
+void sigtstp_handler(int sig)
 {
+    int old_errno = errno;
+    int pid;
+    sigset_t mask_all, prev_one;
+    Sigfillset(&mask_all);
+    Sigprocmask(SIG_BLOCK, &mask_all, &prev_one);
+    if ( (pid=fgpid(jobs)) != 0)  {
+       Sigprocmask(SIG_SETMASK, &prev_one, NULL);
+       Kill(-pid, SIGTSTP);
+    }
+    errno = old_errno;
     return;
 }
 
 /*********************
  * End signal handlers
  *********************/
+
+/*******************************
+ * Functions with checking errno
+ *******************************/
+
+pid_t Fork()
+{
+    pid_t pid;
+    if ((pid = fork()) < 0)  
+        unix_error("Fork error");
+    return pid;
+}
+
+void Sigprocmask(int how, const sigset_t *set, sigset_t *oldset)
+{
+    if (sigprocmask(how, set, oldset) < 0 )
+        unix_error("Sigprocmask error");
+}
+
+void Sigemptyset(sigset_t *set)
+{
+    if (sigemptyset(set) < 0)
+       unix_error("Sigemptyset error"); 
+}
+
+void Sigfillset(sigset_t *set)
+{
+    if (sigfillset(set) < 0)
+       unix_error("Sigfillset error"); 
+}
+
+void Sigaddset(sigset_t *set, int signum)
+{
+    if (sigaddset(set, signum) < 0)
+       unix_error("Sigaddset error"); 
+}
+
+void Execve(const char *filename, char * const argv[], char * const envp[])
+{
+    if (execve(filename, argv, envp) < 0)  
+        printf("%s: Command not found.\n", argv[0]);
+}
+
+void Setpgid(pid_t pid, pid_t pgid)
+{
+    if (setpgid(pid, pgid) < 0)
+        unix_error("Setpgid error");
+}
+
+void Kill(pid_t pid, int sig)
+{
+    //printf("In Kill function : pid = %d\n", pid);
+    if (kill(pid, sig) < 0)
+        unix_error("Kill error");
+}
 
 /***********************************************
  * Helper routines that manipulate the job list
