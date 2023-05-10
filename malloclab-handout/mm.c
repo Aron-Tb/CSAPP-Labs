@@ -24,11 +24,11 @@
  ********************************************************/
 team_t team = {
     /* Team name */
-    "ateam",
+    "noname",
     /* First member's full name */
-    "Harry Bovik",
+    "Aron",
     /* First member's email address */
-    "bovik@cs.cmu.edu",
+    "aron@xxx",
     /* Second member's full name (leave blank if none) */
     "",
     /* Second member's email address (leave blank if none) */
@@ -95,7 +95,12 @@ void *mm_realloc(void *ptr, size_t size)
     return newptr;
 }
 
+int mm_check(void)
+{
 
+
+    
+}
 
 
 
