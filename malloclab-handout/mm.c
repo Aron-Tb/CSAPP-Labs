@@ -1,11 +1,13 @@
 /*
- * mm-naive.c - The fastest, least memory-efficient malloc package.
+ * mm.c - xxx malloc package.
  * 
- * In this naive approach, a block is allocated by simply incrementing
- * the brk pointer.  A block is pure payload. There are no headers or
- * footers.  Blocks are never coalesced or reused. Realloc is
- * implemented directly using mm_malloc and mm_free.
- *
+ * 
+ * 1. 空闲块组织: 如何记录空闲块
+ * 2. 放置策略: 如何选择合适的空闲块，放置新块
+ * 3. 分割: 如何处理空闲块的剩余部分
+ * 4. 合并: 如何处理刚刚被释放的块
+ * 
+ * 
  * NOTE TO STUDENTS: Replace this header comment with your own header
  * comment that gives a high level description of your solution.
  */
@@ -28,7 +30,7 @@ team_t team = {
     /* First member's full name */
     "Aron",
     /* First member's email address */
-    "aron@xxx",
+    "aron@xxx.com",
     /* Second member's full name (leave blank if none) */
     "",
     /* Second member's email address (leave blank if none) */
@@ -41,31 +43,192 @@ team_t team = {
 /* rounds up to the nearest multiple of ALIGNMENT */
 #define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
 
-
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
+
+/* Points to first byte of heap */
+static char *mem_heap;     
+
+/* Some extra functions */
+static void *extend_heap(size_t words);
+static void *firstFit(size_t block_size);
+static void *bestFit(size_t block_size);
+static void place(void *bp, size_t payload_size);
+static void *coalesce(void *bp);
+
+/* Basic constants and macros */
+#define WSIZE 4            // Word and header/footer size (bytes)
+#define DSIZE 8            // Double word size (bytes)
+#define CHUNKSIZE (1<<12)  // Extend heap by this amount (bytes) 扩展堆默认值
+
+#define MAX(x,y) ((x) > (y)? (x) : (y))
+
+// Pack a size and allocated bit into a word 
+#define PACK(size, alloc)  ((size) | (alloc))
+
+// Read and write a word at address p
+#define GET(p)  (*(unsigned int *)(p))
+#define PUT(p, val) (*(unsigned int *)(p) = (val))
+
+// Read the size and allocated fields from address p
+#define GET_SIZE(p)  (GET(p) & ~0x7)
+#define GET_ALLOC(p) (GET(p) & 0x1)
+
+// Given block ptr bp, compute address of its header and footer
+#define HDRP(bp)  ((char *)(bp) - WSIZE)
+#define FTRP(bp)  ((char *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE)
+
+// Given block ptr bp, compute address of next and previous blocks
+#define NEXT_BLKP(bp)  ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE)))
+#define PREV_BLKP(bp)  ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
 
 /* 
  * mm_init - initialize the malloc package.
  */
+
+// 初始化隐式空闲链表数据结构
 int mm_init(void)
 {
+    if ((mem_heap = mem_sbrk(4*WSIZE)) == (void *)-1)
+        return -1;   // 分配失败
+    // 前部填充
+    PUT(mem_heap, 0);
+    // 序言块: header 和 footer
+    PUT(mem_heap + (1*WSIZE), PACK(DSIZE, 1));
+    PUT(mem_heap + (2*WSIZE), PACK(DSIZE, 1)); 
+    // 结尾块
+    PUT(mem_heap + (3*WSIZE), PACK(0, 1));
+    // 移动到序言块header后
+    mem_heap += 2*WSIZE;
+
+    if (extend_heap(CHUNKSIZE/WSIZE) == NULL)
+        return -1;
     return 0;
+}
+
+// extend_heap 向操作系统申请更多的空间，调用时机：初始化分配器时、调用 mm_malloc 不存在可用空闲块时
+static void *extend_heap(size_t words)
+{
+    char *bp;
+    size_t size;
+    // 申请新的空闲块
+    size = ALIGN(words*WSIZE);  // 满足对齐要求
+    if ( (bp = mem_sbrk(size)) == (char *)-1 )  // 第一次扩充时，brk指向结尾块
+        return NULL;
+    PUT(HDRP(bp), PACK(size, 0));  // 新空闲块写入header
+    PUT(FTRP(bp), PACK(size, 0));  // 新空闲块写入footer
+    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));  // 添加新的结尾块
+
+    // 合并相邻空闲块如果存在
+    return coalesce(bp);
+}
+
+/* 放置策略：首次适配，最佳适配 */
+
+// 首次适配
+static void *firstFit(size_t block_size)
+{
+    void *bp = NULL;
+    for (bp=mem_heap; GET_SIZE(HDRP(bp))>0; bp=NEXT_BLKP(bp)) 
+        if (!GET_ALLOC(HDRP(bp)) && GET_SIZE(HDRP(bp)) >= block_size) 
+            break;
+    return bp;
+}
+
+// 最佳适配
+static void *bestFit(size_t block_size)
+{
+    void *bp;
+    void *min_bp = NULL;
+    for (bp = mem_heap; GET_SIZE(HDRP(bp))>0; bp=NEXT_BLKP(bp)) 
+        if (!GET_ALLOC(HDRP(bp)) && GET_SIZE(HDRP(bp)) >= block_size)
+            if ( !min_bp || (GET_SIZE(HDRP(bp)) < GET_SIZE(HDRP(min_bp))) )
+                min_bp = bp;
+    return min_bp;
+}
+
+// 放置分割： place分割空闲块
+static void place(void *bp, size_t payload_size)
+{
+    // 调用此函数应该满足 block_size < size
+    size_t size = GET_SIZE(HDRP(bp));
+    size_t block_size = payload_size + DSIZE;  // 此处自动满足8字节对齐要求
+    // 判断能否分割, 被分割后的小部分需要能标注 header 和 footer
+    if (size >= block_size)  {
+        // 分割: playload是8的倍数， 空闲块也应该是满足8字节对齐要求
+        PUT(HDRP(bp), PACK(block_size, 1));
+        PUT(FTRP(bp), PACK(block_size, 1));
+        if (size >= block_size + DSIZE)  {
+            bp = NEXT_BLKP(bp);
+            PUT(HDRP(bp), PACK(size-block_size, 0));
+            PUT(FTRP(bp), PACK(size-block_size, 0));
+        }
+    }
+    else  {
+        printf("分割空闲块错误!\n");
+        exit(1);
+    }
+}
+
+// 合并： coalesce 合并相邻的空闲块
+static void *coalesce(void *bp)
+{
+    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));  // 不检查header 防止越界
+    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));  // 同理，检查footer 可能会越界
+    size_t size = GET_SIZE(HDRP(bp));
+    // case 1: 不存在相邻空闲块
+    if (!prev_alloc && !next_alloc)  { 
+        return bp;
+    }
+    // case 2: 前一个已分配，后一个为空闲块
+    else if (prev_alloc && !next_alloc)  {
+         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
+         PUT(HDRP(bp), PACK(size, 0));
+         PUT(FTRP(bp), PACK(size, 0));
+    }
+    // case 3: 前一个为空闲块， 后一个已分配
+    else if (!prev_alloc && next_alloc)  {
+        size += GET_SIZE(HDRP(PREV_BLKP(bp)));
+        PUT(FTRP(bp), PACK(size, 0));
+        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
+        bp = PREV_BLKP(bp);
+    }
+    // case 4: 前后都是空闲块
+    else  {
+        size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(HDRP(NEXT_BLKP(bp)));
+        PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
+        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0)); 
+        bp = PREV_BLKP(bp); 
+    }
+    return bp;
 }
 
 /* 
  * mm_malloc - Allocate a block by incrementing the brk pointer.
  *     Always allocate a block whose size is a multiple of the alignment.
  */
-void *mm_malloc(size_t size)
+
+void *mm_malloc(size_t payload_size)
 {
-    int newsize = ALIGN(size + SIZE_T_SIZE);
-    void *p = mem_sbrk(newsize);
-    if (p == (void *)-1)
-	return NULL;
-    else {
-        *(size_t *)p = size;
-        return (void *)((char *)p + SIZE_T_SIZE);
+    // 返回 playload 地址需要满足对齐要求：8bytes
+    // 根据大小申请新的空闲块，若不存在则扩展堆空间
+    if (payload_size == 0)  
+        return NULL;
+    void *bp = NULL;
+    payload_size = ALIGN(payload_size);
+    size_t block_size = payload_size + DSIZE;
+    // 首次适配
+    bp = firstFit(block_size);
+    // 最佳适配
+    // bp = bestFit(block_size);
+    if (!bp)
+        place(bp, payload_size);
+    else  {
+        size_t extend_size = MAX(CHUNKSIZE, block_size);
+        bp = extend_heap(extend_size/WSIZE);
+        if (bp) 
+            place(bp, payload_size);
     }
+    return bp;
 }
 
 /*
@@ -73,6 +236,14 @@ void *mm_malloc(size_t size)
  */
 void mm_free(void *ptr)
 {
+    if (ptr == NULL)
+        return ;
+    size_t size = GET_SIZE(HDRP(ptr));
+
+    PUT(HDRP(ptr), PACK(size, 0));
+    PUT(FTRP(ptr), PACK(size, 0));
+
+    coalesce(ptr);   
 }
 
 /*
@@ -95,13 +266,14 @@ void *mm_realloc(void *ptr, size_t size)
     return newptr;
 }
 
+/*
 int mm_check(void)
 {
 
 
     
 }
-
+*/
 
 
 
