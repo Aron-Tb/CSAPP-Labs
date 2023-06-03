@@ -16,7 +16,7 @@ void rio_readinitb(rio_t *rp, int fd) {
 }
 
 ssize_t rio_read(rio_t rp, char *usrbuf, size_t n) {
-    
+
 }
 
 
