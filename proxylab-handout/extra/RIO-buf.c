@@ -2,8 +2,6 @@
 #include <errno.h>
 #include <string.h>
 
-#define RIO_BUFSIZE 8192
-
 /* 
  * RIO functions without buffer.
  */
@@ -48,6 +46,7 @@ ssize_t rio_writen(int fd, void *userbuf, size_t n) {
  * RIO functions With buffer.
  */
 
+#define RIO_BUFSIZE 8192
 typedef struct {
     int rio_fd;                /* Descriptor for this internal buf */
     int rio_cnt;               /* Unread bytes in internal buf */
@@ -112,5 +111,20 @@ ssize_t rio_readlineb(rio_t *rp, void *usrbuf, size_t max_len) {
 }
 
 ssize_t rio_readnb(rio_t *rp, void *usrbuf, size_t n) {
-
+    ssize_t nread = 0;
+    size_t nleft = n;
+    char *bufp = usrbuf;
+    while (nleft > 0) {
+        ssize_t cur_read = rio_read(rp, bufp, nleft);
+        if (cur_read == 0)  // EOF
+            break;
+        else if (cur_read == -1)  // Error
+            return -1;
+        else {
+            nleft -= cur_read;
+            nread += cur_read;
+            bufp += cur_read;
+        }
+    }
+    return nread;
 }
