@@ -7,26 +7,21 @@
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
 
-struct Url_part {
+struct Url {
     char host[MAXLINE];
     char port[MAXLINE];
-    char uri[MAXLINE];
+    char path[MAXLINE];
 };
 
 // Some function's  prototypes needed
 void sigpipe_handler() ;
 void doit(int connfd);
-int legalRequest(const char *method, const char *url, const char *version);
-void parse_url(const char *url, struct Url_part *url_data);
-void build_request(char *request, const char *method, struct Url_part *url_data, rio_t *rio);
+int legal_request(const char *method, const char *version);
+void parse_uri(const char *uri, struct Url *url_data);
+void build_request(char *request, const char *method, struct Url *url_data, rio_t *rio);
 
 int main(int argc, char **argv)
 {
-    // 1. 等待客户端连接
-    // 2. 连接建立
-    // 3. 输出连接信息
-    // 4. 解析和处理请求
-
     if (argc != 2) {
         fprintf(stderr, "usage: %s <port number>\n", argv[0]);
         return 0;
@@ -47,7 +42,7 @@ int main(int argc, char **argv)
         Close(connfd);
     }
     Close(listenfd);
-    printf("%s", user_agent_hdr);
+    // printf("%s", user_agent_hdr);
     return 0;
 }
 
@@ -58,7 +53,7 @@ void sigpipe_handler() {
 
 void doit(int connfd) {
     char buf[MAXLINE];
-    char method[MAXLINE], url[MAXLINE], version[MAXLINE];  // 规定了客户端发送 URL    
+    char method[MAXLINE], uri[MAXLINE], version[MAXLINE];  
     rio_t rio, server_rio;
 
     // Read request line
@@ -66,24 +61,26 @@ void doit(int connfd) {
     Rio_readlineb(&rio, buf, MAXLINE);
     printf("Request headers:\n");
     printf("%s", buf);
-    sscanf(buf, "%s %s %s", method, url, version); 
+    sscanf(buf, "%s %s %s", method, uri, version); 
     
     // Check the legality of request line
-    if (!legalRequest(method, url, version)) {
+    if (!legal_request(method, version)) {
         printf("Illeagl request!\n");
         return ;
     }
     
     // Parse url
-    struct Url_part *url_data = (struct Url_part *)malloc(sizeof(struct Url_part) );
-    parse_url(url, url_data);
+    struct Url *url_data = (struct Url *)malloc(sizeof(struct Url) );
+    memset(url_data, 0, sizeof(struct Url));
+    parse_uri(uri, url_data);
 
     // Send and receive message
     char request[MAXLINE];
     memset(request, 0, MAXLINE);
-    
-    build_request(request, method, url_data, &rio);
-    
+    build_request(request, method, url_data, &rio);  // 生成 HTTP 请求信息，补充url
+
+    //printf("Request:\n%s", request);
+
     // Send to server
     int serverfd = Open_clientfd(url_data->host, url_data->port);
     if (serverfd < 0 ) {
@@ -104,63 +101,70 @@ void doit(int connfd) {
     Close(serverfd);
 }
 
-int legalRequest(const char *method, const char *url, const char *version) {
+int legal_request(const char *method, const char *version) {
     if (strcasecmp(method, "GET") && strcasecmp(method, "POST") ) 
         return 0;
-    if (strcasecmp(version, "HTTP/1.0") && strcasecmp(version, "HTTP/1.1"))
-        return 0;
-    if (!strstr(url, "//"))
+    if (strcasecmp(version, "HTTP/1.0") && strcasecmp(version, "HTTP/1.1")) 
         return 0;
     return 1;
 }
 
-void parse_url(const char *url, struct Url_part *url_data) {
-    char *host_start = strstr(url, "//") + 2;
-    char *host_end = strstr(host_start, "/") - 1;
-    
-    memcpy(url_data->host, host_start, host_end - host_start + 1);
-    url_data->host[host_end - host_start + 1] = '\0';
-    
-    char *port_start = strstr(url, ":");
+void parse_uri(const char *uri, struct Url *url_data) {
+    char *url_start = strstr(uri, "//");
     char *uri_start;
-    if (port_start == NULL) {
-        strcpy(url_data->port, "80");
-        uri_start = host_end + 1;
-    }
-    else {
-        port_start += 1;
-        char *port_end = strstr(port_start, "/") - 1;
-        memcpy(url_data->port, port_start, port_end - port_start + 1);
-        url_data->port[port_end - port_start + 1] = '\0';
-        uri_start = port_end + 1;
-    }
-    
-    strcpy(url_data->uri, uri_start);
+    // URI
+    if (url_start == NULL)  
+        uri_start = strstr(uri, "/");   
+    // URL
+    else 
+        uri_start = strstr(url_start+2, "/");
+    strcpy(url_data->path, uri_start);
 }
 
-void build_request(char *request, const char *method, struct Url_part *url_data, rio_t *rio) {
+void build_request(char *request, const char *method, struct Url *url_data, rio_t *rio) {
+    // 生成请求行
     char request_line[MAXLINE];
     char *request_line_fmt = "%s %s HTTP/1.0\r\n";
-    sprintf(request_line, request_line_fmt, method, url_data->uri);
+    sprintf(request_line, request_line_fmt, method, url_data->path);
 
-    char host_hdr[MAXLINE];
-    char *host_hdr_fmt = "Host: %s\r\n";
-    sprintf(host_hdr, host_hdr_fmt, url_data->host);
-
-    // user-agent hdr provided
-    char connection_hdr[] = "Connection: close\r\n";
-    char proxy_connection_hdr[] = "Proxy-Connection: close\r\n";
-
-    // 读取消息头其他信息
+    // 读取接收的消息头信息
     char extra_hdrs[MAXLINE];
     extra_hdrs[0] = '\0';
     char buf[MAXLINE];
     while (Rio_readlineb(rio, buf, MAXLINE) > 0) {
         if (strcmp(buf, "\r\n") == 0)
             break;
-        if (!strstr(buf, "Host") &&  !strstr(buf, "Connection: ") && !strstr(buf, "Proxy-Connection: ") && !strstr(buf, user_agent_hdr))
-            strcat(extra_hdrs, buf);
+        else {
+            char *host = strstr(buf, "Host: ");
+            if (host) {
+                host += 6;
+                char *port = strstr(host, ":");
+                if (port) {
+                    port += 1;
+                    char *port_end = strstr(port, "\r\n");
+                    strncpy(url_data->host, host, port-1-host);
+                    strncpy(url_data->port, port, port_end-port);
+                }
+                else { 
+                    strcpy(url_data->port, "80");
+                    char *host_end = strstr(port, "\r\n");
+                    strncpy(url_data->host, host, host_end-host);
+                }
+            }
+            else if (!strstr(buf, "User-Agent") && !strstr(buf, "Connection") && !strstr(buf, "Proxy-Connection")) 
+                strcpy(extra_hdrs, buf);
+        }
     }
+    char host_hdr[MAXLINE];
+    strcpy(host_hdr, "Host: ");
+    strcat(host_hdr, url_data->host);
+    if (strcmp(url_data->port, "80"))
+        strcat(strcat(host_hdr, ":"), url_data->port);
+    // user-agent hdr provided
+    char connection_hdr[] = "Connection: close\r\n";
+    char proxy_connection_hdr[] = "Proxy-Connection: close\r\n";
+    
+    // 生成消息: HOST、 User-Agent、 Connection、 Proxy-Connection
     sprintf(request, "%s%s%s%s%s%s\r\n",
             request_line,
             host_hdr,
@@ -168,10 +172,5 @@ void build_request(char *request, const char *method, struct Url_part *url_data,
             proxy_connection_hdr,
             user_agent_hdr,
             extra_hdrs);
-       
-    // 读取消息体
-    while (Rio_readlineb(rio, buf, MAXLINE) > 0) 
-        strcat(request, buf);
-    
     return ;
 }
