@@ -42,7 +42,6 @@ int main(int argc, char **argv)
         Close(connfd);
     }
     Close(listenfd);
-    // printf("%s", user_agent_hdr);
     return 0;
 }
 
