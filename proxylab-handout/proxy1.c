@@ -4,43 +4,22 @@
 #define MAX_CACHE_SIZE 1049000
 #define MAX_OBJECT_SIZE 102400
 
-
-
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
 
-// some structs
 struct Url {
     char host[MAXLINE];
     char port[MAXLINE];
     char path[MAXLINE];
 };
 
-// max number of threads
-#define NTHREADS 100
-
-typedef struct {
-    sem_t mutex; 
-    sem_t slots;
-    sem_t free_fds;  // 需要被线程服务的连接
-    int fd_set[NTHREADS];
-    int fds_free[NTHREADS];  // 标记连接是否正在被服务
-}Pool;
-
 // Some function's  prototypes needed
 void sigpipe_handler() ;
 void doit(int connfd);
-int  legal_request(const char *method, const char *version);
+int legal_request(const char *method, const char *version);
 void parse_uri(const char *uri, struct Url *url_data);
 void build_request(char *request, const char *method, struct Url *url_data, rio_t *rio);
-// Thread_pool functions
-void init_pool(Pool *p);
-void add_client(int connfd, Pool *p);
-void remove_client(int connfd, Pool *p);
-void thread();
 
-
-static Pool pool;
 int main(int argc, char **argv)
 {
     if (argc != 2) {
@@ -48,85 +27,23 @@ int main(int argc, char **argv)
         return 0;
     }
     
+    char client_name[MAXLINE], client_port[MAXLINE];
     int listenfd, connfd;
     struct sockaddr_storage client_addr;
-    socklen_t client_len; 
-    char client_name[MAXLINE], client_port[MAXLINE];
-
+    socklen_t client_len = sizeof(client_addr);
+    
     signal(SIGPIPE, sigpipe_handler);  // 捕获SIGPIPE信号，处理过早关闭的连接
     listenfd = Open_listenfd(argv[1]);
-    
-    pthread_t tid;
-    for (int i=0; i<NTHREADS; ++i) 
-        Pthread_create(&tid, NULL, thread, NULL);
-    init_pool(&pool);
-    
     while (1) {
-        client_len = sizeof(client_addr);
         connfd = Accept(listenfd, (SA *)&client_addr, &client_len);
-        add_client(connfd, &pool);
         Getnameinfo((SA *)&client_addr, client_len, client_name, MAXLINE, client_port, MAXLINE, 0);
         printf("Accept connection from (%s, %s)\n", client_name, client_port);
+        doit(connfd);
+        Close(connfd);
     }
     Close(listenfd);
     return 0;
 }
-
-void init_pool(Pool *p) {
-    Sem_init(&p->mutex, 0, 1);
-    Sem_init(&p->slots, 0, NTHREADS);
-    Sem_init(&p->free_fds, 0, NTHREADS);
-    for (int i=0; i<NTHREADS; ++i) {
-        p->fd_set[i] = -1;
-        p->free_fds[i] = 1;
-    }
-}
-
-void add_client(int connfd, Pool *p) {
-    P(&p->slots);
-    P(&p->mutex);
-    for (int i=0; i<NTHREADS; ++i) {
-        if (p->fd_set[i] < 0) {
-            p->fd_set[i] = connfd;
-            V(&p->free_fds);
-        }
-    }
-    V(&p->mutex);
-}
-
-void remove_client(int connfd, Pool *p) {
-    P(&p->mutex);
-    int i;
-    for (i=0; i<NTHREADS; ++i) {
-        if (p->fd_set[i] == connfd) {
-            p->fd_set[i] = -1;
-            V(&p->slots);
-            V(&p->free_fds);
-        }
-    }
-    V(&p->mutex);
-    if (i == NTHREADS)
-        app_error("No such connfd!");
-}
-
-// 从线程池返回一个未被线程服务的连接
-int get_fd(Pool *p) {
-    int connfd;
-    return connfd;
-}
-
-
-void thread() {
-    pthread_t self_tid = pthread_self(); 
-    pthread_detach(self_tid);
-    int connfd;
-    
-    
-    doit(connfd);
-    Close(connfd);
-    remove_client(connfd, &pool); // 释放线程池
-}
-
 
 void sigpipe_handler() {
     fprintf(stderr, "Proxy received a sigpipe.");
