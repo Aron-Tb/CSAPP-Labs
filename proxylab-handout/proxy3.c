@@ -18,12 +18,9 @@ int  legal_request(const char *method, const char *version);
 void parse_uri(const char *uri, struct Url *url_data);
 void build_request(char *request, const char *method, struct Url *url_data, rio_t *rio);
 
-// Creat a thread_pool
-Pool pool;
-// Creat a cache
-Cache cache;
-// Creat a doubled_linked list
-Dbl dbl;
+Pool pool;   // Creat a thread_pool
+Cache cache; // Creat a cache
+Dbl dbl;     // Creat a doubled_linked list
 
 int main(int argc, char **argv)
 {
@@ -46,7 +43,6 @@ int main(int argc, char **argv)
     init_pool(&pool);
     init_cache(&cache);
     init_list(&dbl);
-
     while (1) {
         client_len = sizeof(client_addr);
         connfd = Accept(listenfd, (SA *)&client_addr, &client_len);
@@ -99,7 +95,7 @@ void doit(int connfd) {
             printf("Connecting to server failed.\n");
             return ;
         }
-        printf("Proxy received %d bytes, then repost to server\n", (int) strlen(request));
+        // printf("Proxy received %d bytes, then repost to server\n", (int) strlen(request));
         Rio_writen(serverfd, request, strlen(request));  // 转发给服务器}
     
         // Send to client & 写入 Cache, 更新 LRU 
@@ -112,7 +108,7 @@ void doit(int connfd) {
         memset(web_obj, 0, MAX_OBJECT_SIZE);
 
         while ((n = Rio_readlineb(&server_rio, buf, MAXLINE)) != 0) {
-            printf("proxy received %d bytes,then send\n", (int)n);
+            // printf("proxy received %d bytes,then send\n", (int)n);
             Rio_writen(connfd, buf, n);
             if (hdr_flag) {
                 if (!strcmp(buf, "\r\n")) 

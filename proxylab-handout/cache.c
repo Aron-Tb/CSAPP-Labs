@@ -61,12 +61,17 @@ int find_cache(const char *uri, Cache *p) {
 /* LRU */
 
 void init_list(Dbl *p) {
-    p->head->index = -1;
-    p->head->pre = NULL;
-    p->head->next = p->rear;
-    p->rear->index = -1;
-    p->rear->pre = p->head;
-    p->rear->next = NULL;
+    struct Node *head = malloc(sizeof(struct Node));
+    struct Node *rear = malloc(sizeof(struct Node));
+    head->index = -1;
+    head->pre = NULL;
+    head->next = rear;
+    rear->index = -1;
+    rear->pre = head;
+    rear->next = NULL;
+    
+    p->head = head;
+    p->rear = rear;
     sem_init(&p->mutex, 0, 1);
 }
 

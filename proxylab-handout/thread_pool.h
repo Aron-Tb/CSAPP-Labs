@@ -3,7 +3,7 @@
 
 #include "csapp.h"
 
-#define NTHREADS 100  // max number of threads
+#define NTHREADS 10  // max number of threads
 
 typedef struct {
     sem_t mutex; 
