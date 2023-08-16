@@ -12,7 +12,7 @@
  * This is the default path where the driver will look for the
  * default tracefiles. You can override it at runtime with the -t flag.
  */
-#define TRACEDIR "/home/aron/Code/CSAPP-Labs/Code/malloclab-handout/traces/"
+#define TRACEDIR "/home/aron/code/CSAPP/malloclab-handout/traces/"
 
 /*
  * This is the list of default tracefiles in TRACEDIR that the driver
